@@ -2,9 +2,12 @@ name: Daily Market Data Update
 
 on:
   schedule:
-    # UTC 08:30 = 北京时间 16:30
     - cron: '30 8 * * *'
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
+
+# 添加这行：授予内容写入权限
+permissions:
+  contents: write
 
 jobs:
   update:
