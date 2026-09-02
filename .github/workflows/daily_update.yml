@@ -5,7 +5,7 @@ on:
     - cron: '30 8 * * *'
   workflow_dispatch:
 
-# 添加这行：授予内容写入权限
+# 授予内容写入权限
 permissions:
   contents: write
 
