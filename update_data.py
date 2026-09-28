@@ -2,10 +2,12 @@
 数据抓取脚本 - 生成 SQLite 数据库
 每天运行一次，保留历史数据，只替换当日
 """
+import os
+import re
 import sqlite3
 import requests
-import re
 from datetime import datetime
+from pathlib import Path
 
 DB_PATH = "market.db"
 
@@ -131,23 +133,135 @@ def get_mock_indices():
     ]
 
 
-def get_news():
-    """新闻（后续可替换为 RSS/API）"""
+
+def _tushare_session():
+    """创建带 Cookie 的 tushare 会话；Cookie 从环境变量读取，不要硬编码。"""
+    cookie = os.environ.get("TUSHARE_COOKIE", "").strip()
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    })
+    if cookie:
+        session.headers.update({"Cookie": cookie})
+    else:
+        print("⚠️ 未设置 TUSHARE_COOKIE，tushare 网页资讯可能无法登录/返回空结果")
+    return session
+
+
+def _clean_text(s):
+    s = re.sub(r"<[^>]+>", " ", s or "")
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def _infer_market_level(title):
+    t = title
+    market = "China"
+    if any(k in t for k in ["港股", "香港", "港交所", "恒生"]):
+        market = "HK"
+    elif any(k in t for k in ["日本", "日经", "日银", "日本央行"]):
+        market = "Japan"
+    elif any(k in t for k in ["韩国", "韩股", "首尔", "KOSPI"]):
+        market = "Korea"
+
+    level = 3
+    if any(k in t for k in ["央行", "加息", "降息", "通胀", "风险", "大跌", "危机", "监管", "证监会"]):
+        level = 1
+    elif any(k in t for k in ["政策", "改革", "数据", "发布", "净买入", "南向资金"]):
+        level = 2
+    return market, level
+
+
+def _parse_tushare_news_html(html, limit=50):
+    """从 tushare 资讯 HTML 中保守提取标题链接；解析不到时返回空列表。"""
+    items, seen = [], set()
+
+    # 优先 BeautifulSoup，失败则退化到正则；requirements 需安装 beautifulsoup4
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        anchors = soup.find_all("a")
+        candidates = []
+        for a in anchors:
+            title = _clean_text(a.get_text(" "))
+            href = a.get("href", "") or ""
+            if not title or len(title) < 8 or len(title) > 120:
+                continue
+            if any(x in href for x in ["/login", "/register", "/weborder", "javascript:"]):
+                continue
+            candidates.append((title, href))
+    except Exception:
+        candidates = []
+        for m in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, flags=re.S|re.I):
+            href, title = m.group(1), _clean_text(m.group(2))
+            if not title or len(title) < 8 or len(title) > 120:
+                continue
+            if any(x in href for x in ["/login", "/register", "/weborder", "javascript:"]):
+                continue
+            candidates.append((title, href))
+
     today = datetime.now().strftime("%Y-%m-%d")
-    return [
-        {"trade_date": today, "time": "09:15", "source": "央行",
-         "title": "今日公开市场开展1000亿元7天期逆回购操作",
-         "content": "维护银行体系流动性合理充裕", "market": "China", "level": 1},
-        {"trade_date": today, "time": "11:30", "source": "证监会",
-         "title": "就《上市公司监管指引》公开征求意见",
-         "content": "进一步规范上市公司信息披露行为", "market": "China", "level": 2},
-        {"trade_date": today, "time": "14:00", "source": "日经新闻",
-         "title": "日本央行行长暗示年内可能调整宽松政策",
-         "content": "关注通胀持续性和工资增长", "market": "Japan", "level": 1},
-        {"trade_date": today, "time": "15:30", "source": "港交所",
-         "title": "港股通今日净买入45亿港元",
-         "content": "科技股获持续加仓", "market": "HK", "level": 2},
-    ]
+    now = datetime.now().strftime("%H:%M")
+    for title, href in candidates:
+        key = (title, href)
+        if key in seen:
+            continue
+        seen.add(key)
+        market, level = _infer_market_level(title)
+        items.append({
+            "trade_date": today,
+            "time": now,
+            "source": "Tushare/东方财富",
+            "title": title,
+            "content": href,
+            "market": market,
+            "level": level,
+        })
+        if len(items) >= limit:
+            break
+    return items
+
+
+def fetch_tushare_news(limit=50):
+    """按你给定的思路抓取 tushare 网页的东方财富资讯，并解析为展板 news 结构。"""
+    home = "https://tushare.pro/"
+    news_url = "https://tushare.pro/news/eastmoney"
+    session = _tushare_session()
+
+    # 先访问首页建立会话/登录态，再访问资讯页
+    r0 = session.get(home, timeout=20)
+    if r0.status_code != 200:
+        print(f"❌ tushare 首页登录态请求失败: HTTP {r0.status_code}")
+        return []
+
+    headers = {"Referer": home, "Accept": session.headers.get("Accept", "*/*")}
+    r = session.get(news_url, headers=headers, timeout=20)
+    if r.status_code != 200:
+        print(f"❌ tushare 东方财富资讯请求失败: HTTP {r.status_code}")
+        return []
+
+    # 保存原始页便于排查结构变化；不要提交到仓库
+    Path("tushare_eastmoney.html").write_text(r.text, encoding="utf-8")
+    news = _parse_tushare_news_html(r.text, limit=limit)
+    print(f"✅ tushare 资讯解析：{len(news)} 条（原始页已保存到 tushare_eastmoney.html）")
+    return news
+
+
+def get_news():
+    """兼容入口：优先使用 tushare 网页爬虫；失败时不造演示数据，返回空列表。"""
+    try:
+        news = fetch_tushare_news()
+        if news:
+            return news
+        print("⚠️ tushare 资讯未解析到条目，今日 news 将为空；请检查 TUSHARE_COOKIE 或页面结构")
+        return []
+    except Exception as e:
+        print(f"❌ 获取 tushare 资讯失败: {e}")
+        return []
 
 
 def save_to_db(indices, news_list):
@@ -195,3 +309,4 @@ if __name__ == "__main__":
     news = get_news()
     save_to_db(indices, news)
     print("完成")
+
