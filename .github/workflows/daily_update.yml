@@ -27,6 +27,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run data update
+        env:
+          TUSHARE_COOKIE: ${{ secrets.TUSHARE_COOKIE }}
         run: python update_data.py
 
       - name: Commit and push if changed
