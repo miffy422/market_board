@@ -30,6 +30,13 @@ jobs:
         env:
           TUSHARE_COOKIE: ${{ secrets.TUSHARE_COOKIE }}
         run: python update_data.py
+      - name: Upload tushare html
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tushare-debug
+          path: tushare_eastmoney.html
+          retention-days: 3
 
       - name: Commit and push if changed
         run: |
