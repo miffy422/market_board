@@ -144,10 +144,10 @@ def get_mock_indices():
 
 def run_tushare_crawler():
     """tushare 东方财富资讯爬虫"""
-    cookie = os.environ.get("TUSHARE_COOKIE")
 
     # 登录
     url = "https://tushare.pro/"
+    cookie="uid=2|1:0|10:1788145284|3:uid|8:NTQ3OTA1|f6d64bd9a071b7a948867f4d8d62123299f6222a4709f9d3b8bd909eb12713e7; username=2|1:0|10:1788145284|8:username|12:MTgwKioqMTA2|3b0b29c6e977540eaf922e1bad9d6d0ceb6ee8daa05f79df4703c5b861f702ec"
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Encoding": "gzip, deflate, br, zstd",
