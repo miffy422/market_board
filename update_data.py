@@ -144,9 +144,7 @@ def get_mock_indices():
 
 def run_tushare_crawler():
     """tushare 东方财富资讯爬虫"""
-    cookie = os.environ.get("TUSHARE_COOKIE", "").strip()
-
-    session = requests.Session()
+    cookie = os.environ.get("TUSHARE_COOKIE", "")
 
     # 登录
     url = "https://tushare.pro/"
@@ -167,12 +165,14 @@ def run_tushare_crawler():
         "Upgrade-Insecure-Requests": "1",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0",
     }
+    session = requests.Session()
     response = session.get(url, headers=headers)
-    print(cookie)
-    if response.status_code == 200:
+    if response.status_code==200:
         print("登录成功")
     else:
         print("登录失败")
+        print(response.text)
+
 
     # 请求资讯（东方财富）
     url = "https://tushare.pro/news/eastmoney"
