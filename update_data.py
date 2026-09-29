@@ -143,7 +143,7 @@ def get_mock_indices():
 
 
 def run_tushare_crawler():
-    """tushare 东方财富资讯爬虫（Cookie 从环境变量读取，其余与原脚本一致）"""
+    """tushare 东方财富资讯爬虫"""
     cookie = os.environ.get("TUSHARE_COOKIE", "").strip()
 
     session = requests.Session()
@@ -168,8 +168,11 @@ def run_tushare_crawler():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0",
     }
     response = session.get(url, headers=headers)
+    print(cookie)
     if response.status_code == 200:
         print("登录成功")
+    else:
+        print("登录失败")
 
     # 请求资讯（东方财富）
     url = "https://tushare.pro/news/eastmoney"
@@ -228,32 +231,30 @@ def parse_tushare_news(html, limit=100):
             title, content = text, ""
 
         # 市场归属
-        if any(k in text for k in ["港股", "恒生", "港交所", "香港"]):
-            market = "HK"
-        elif any(k in text for k in ["日经", "日本", "日银", "日元"]):
-            market = "Japan"
-        elif any(k in text for k in ["韩国", "KOSPI", "韩股", "首尔"]):
-            market = "Korea"
-        else:
-            market = "China"
+        # if any(k in text for k in ["港股", "恒生", "港交所", "香港"]):
+        #     market = "HK"
+        # elif any(k in text for k in ["日经", "日本", "日银", "日元"]):
+        #     market = "Japan"
+        # elif any(k in text for k in ["韩国", "KOSPI", "韩股", "首尔"]):
+        #     market = "Korea"
+        # else:
+        #     market = "China"
 
-        # 重要级别
-        if any(k in text for k in ["央行", "加息", "降息", "暴跌", "大跌",
-                                   "涨停", "战争", "冲突", "制裁", "危机"]):
-            level = 1
-        elif text.startswith("【"):
-            level = 2
-        else:
-            level = 3
+        # # 重要级别
+        # if any(k in text for k in ["央行", "加息", "降息", "暴跌", "大跌",
+        #                            "涨停", "战争", "冲突", "制裁", "危机"]):
+        #     level = 1
+        # elif text.startswith("【"):
+        #     level = 2
+        # else:
+        #     level = 3
 
         news.append({
             "trade_date": today,
             "time": time_str,
             "source": "东方财富",
             "title": title[:120],
-            "content": content[:500],
-            "market": market,
-            "level": level,
+            "content": content[:500]
         })
         if len(news) >= limit:
             break
