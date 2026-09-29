@@ -144,7 +144,7 @@ def get_mock_indices():
 
 def run_tushare_crawler():
     """tushare 东方财富资讯爬虫"""
-    cookie = os.environ.get("TUSHARE_COOKIE", "")
+    cookie = os.environ.get("TUSHARE_COOKIE")
 
     # 登录
     url = "https://tushare.pro/"
