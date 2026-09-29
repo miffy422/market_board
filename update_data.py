@@ -2,8 +2,10 @@
 数据抓取脚本 - 生成 SQLite 数据库
 每天运行一次，保留历史数据，只替换当日
 """
+
 import os
 import re
+import html as html_lib
 import sqlite3
 import requests
 from datetime import datetime
@@ -32,7 +34,7 @@ def init_db():
     """初始化数据库表（如果不存在）"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('''
+    c.execute("""
         CREATE TABLE IF NOT EXISTS indices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             trade_date TEXT,
@@ -44,8 +46,8 @@ def init_db():
             volume REAL,
             update_time TEXT
         )
-    ''')
-    c.execute('''
+    """)
+    c.execute("""
         CREATE TABLE IF NOT EXISTS news (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             trade_date TEXT,
@@ -56,7 +58,7 @@ def init_db():
             market TEXT,
             level INTEGER
         )
-    ''')
+    """)
     conn.commit()
     conn.close()
 
@@ -86,8 +88,12 @@ def fetch_tencent():
                 continue
             _, market = TENCENT_CODES.get(code, (name, "Unknown"))
             result.append({
-                "market": market, "code": code, "name": name,
-                "close": close, "change_pct": change_pct, "volume": 0
+                "market": market,
+                "code": code,
+                "name": name,
+                "close": close,
+                "change_pct": change_pct,
+                "volume": 0,
             })
         print(f"✅ 腾讯接口：{len(result)} 条")
         return result
@@ -103,18 +109,22 @@ def fetch_global():
     for item in EASTMONEY_GLOBAL:
         try:
             url = (
-                f"http://push2.eastmoney.com/api/qt/stock/get"
+                "http://push2.eastmoney.com/api/qt/stock/get"
                 f"?secid={item['secid']}&fields=f43,f44,f57,f58,f60"
             )
             resp = requests.get(url, headers=headers, timeout=10)
-            data = resp.json().get("data", {})
-            close = data.get("f43", 0)
-            change_pct = data.get("f58", 0)
+            data = resp.json().get("data", {}) or {}
+            close = data.get("f43", 0) or 0
+            change_pct = data.get("f58", 0) or 0
             if close > 10000:
                 close = close / 100
             result.append({
-                "market": item["market"], "code": item["secid"], "name": item["name"],
-                "close": round(close, 2), "change_pct": round(change_pct, 2), "volume": 0
+                "market": item["market"],
+                "code": item["secid"],
+                "name": item["name"],
+                "close": round(close, 2),
+                "change_pct": round(change_pct, 2),
+                "volume": 0,
             })
             print(f"✅ {item['name']}: {close} ({change_pct}%)")
         except Exception as e:
@@ -133,85 +143,74 @@ def get_mock_indices():
     ]
 
 
-
-def _tushare_session():
-    """创建带 Cookie 的 tushare 会话；Cookie 从环境变量读取，不要硬编码。"""
-    cookie = os.environ.get("TUSHARE_COOKIE", "").strip()
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-    })
-    if cookie:
-        session.headers.update({"Cookie": cookie})
-    else:
-        print("⚠️ 未设置 TUSHARE_COOKIE，tushare 网页资讯可能无法登录/返回空结果")
-    return session
+def normalize_cookie(raw):
+    """
+    把 Secret 里可能带有的换行/缩进规整成单行 Cookie。
+    不打印原文。
+    """
+    pairs = []
+    for line in re.split(r"[\r\n]+", raw or ""):
+        for part in line.split(";"):
+            part = part.strip()
+            if part:
+                pairs.append(part)
+    return "; ".join(pairs)
 
 
-def _clean_text(s):
+def clean_text(s):
     s = re.sub(r"<[^>]+>", " ", s or "")
+    s = html_lib.unescape(s)
     s = re.sub(r"\s+", " ", s)
     return s.strip()
 
 
-def _infer_market_level(title):
-    t = title
-    market = "China"
-    if any(k in t for k in ["港股", "香港", "港交所", "恒生"]):
+def infer_market_level(title):
+    if any(k in title for k in ["港股", "香港", "港交所", "恒生"]):
         market = "HK"
-    elif any(k in t for k in ["日本", "日经", "日银", "日本央行"]):
+    elif any(k in title for k in ["日本", "日经", "日银", "日本央行"]):
         market = "Japan"
-    elif any(k in t for k in ["韩国", "韩股", "首尔", "KOSPI"]):
+    elif any(k in title for k in ["韩国", "韩股", "首尔", "KOSPI"]):
         market = "Korea"
+    else:
+        market = "China"
 
     level = 3
-    if any(k in t for k in ["央行", "加息", "降息", "通胀", "风险", "大跌", "危机", "监管", "证监会"]):
+    if any(k in title for k in ["央行", "加息", "降息", "通胀", "风险", "大跌", "危机", "监管", "证监会"]):
         level = 1
-    elif any(k in t for k in ["政策", "改革", "数据", "发布", "净买入", "南向资金"]):
+    elif any(k in title for k in ["政策", "改革", "数据", "发布", "净买入", "南向资金"]):
         level = 2
     return market, level
 
 
-def _parse_tushare_news_html(html, limit=50):
-    """从 tushare 资讯 HTML 中保守提取标题链接；解析不到时返回空列表。"""
-    items, seen = [], set()
-
-    # 优先 BeautifulSoup，失败则退化到正则；requirements 需安装 beautifulsoup4
-    try:
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, "html.parser")
-        anchors = soup.find_all("a")
-        candidates = []
-        for a in anchors:
-            title = _clean_text(a.get_text(" "))
-            href = a.get("href", "") or ""
-            if not title or len(title) < 8 or len(title) > 120:
-                continue
-            if any(x in href for x in ["/login", "/register", "/weborder", "javascript:"]):
-                continue
-            candidates.append((title, href))
-    except Exception:
-        candidates = []
-        for m in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, flags=re.S|re.I):
-            href, title = m.group(1), _clean_text(m.group(2))
-            if not title or len(title) < 8 or len(title) > 120:
-                continue
-            if any(x in href for x in ["/login", "/register", "/weborder", "javascript:"]):
-                continue
-            candidates.append((title, href))
-
+def parse_news_loose(html, limit=80):
+    """
+    宽松解析：只提取 <a> 文本/href。
+    不追求完美，优先保证不因为选择器太严格而 0 条。
+    """
     today = datetime.now().strftime("%Y-%m-%d")
     now = datetime.now().strftime("%H:%M")
-    for title, href in candidates:
+    items = []
+    seen = set()
+
+    bad_href = ["/login", "/register", "/weborder", "javascript:", "logout", "settings"]
+    for m in re.finditer(
+        r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+        html,
+        flags=re.I | re.S,
+    ):
+        href = (m.group(1) or "").strip()
+        title = clean_text(m.group(2))
+        if not title or len(title) < 4:
+            continue
+        if any(b in href.lower() for b in bad_href):
+            continue
+
         key = (title, href)
         if key in seen:
             continue
         seen.add(key)
-        market, level = _infer_market_level(title)
+
+        market, level = infer_market_level(title)
         items.append({
             "trade_date": today,
             "time": now,
@@ -226,42 +225,51 @@ def _parse_tushare_news_html(html, limit=50):
     return items
 
 
-def fetch_tushare_news(limit=50):
-    """按你给定的思路抓取 tushare 网页的东方财富资讯，并解析为展板 news 结构。"""
-    home = "https://tushare.pro/"
-    news_url = "https://tushare.pro/news/eastmoney"
-    session = _tushare_session()
+def fetch_tushare_news():
+    """
+    按你本地可运行的最小思路抓 tushare 东方财富资讯：
+    直接 GET /news/eastmoney，保存 东方财富.txt，再宽松解析入库。
+    """
+    cookie = normalize_cookie(os.environ.get("TUSHARE_COOKIE", ""))
+    if not cookie:
+        print("⚠️ 未设置 TUSHARE_COOKIE，跳过 tushare 资讯")
 
-    # 先访问首页建立会话/登录态，再访问资讯页
-    r0 = session.get(home, timeout=20)
-    if r0.status_code != 200:
-        print(f"❌ tushare 首页登录态请求失败: HTTP {r0.status_code}")
-        return []
+    url = "https://tushare.pro/news/eastmoney"
+    headers = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+        "Connection": "keep-alive",
+        "Cookie": cookie,
+        "Host": "tushare.pro",
+        "Referer": "https://tushare.pro/news/sina",
+        "Upgrade-Insecure-Requests": "1",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0",
+    }
 
-    headers = {"Referer": home, "Accept": session.headers.get("Accept", "*/*")}
-    r = session.get(news_url, headers=headers, timeout=20)
-    if r.status_code != 200:
-        print(f"❌ tushare 东方财富资讯请求失败: HTTP {r.status_code}")
-        return []
-
-    # 保存原始页便于排查结构变化；不要提交到仓库
-    Path("tushare_eastmoney.html").write_text(r.text, encoding="utf-8")
-    news = _parse_tushare_news_html(r.text, limit=limit)
-    print(f"✅ tushare 资讯解析：{len(news)} 条（原始页已保存到 tushare_eastmoney.html）")
-    return news
-
-
-def get_news():
-    """兼容入口：优先使用 tushare 网页爬虫；失败时不造演示数据，返回空列表。"""
     try:
-        news = fetch_tushare_news()
-        if news:
-            return news
-        print("⚠️ tushare 资讯未解析到条目，今日 news 将为空；请检查 TUSHARE_COOKIE 或页面结构")
-        return []
+        resp = requests.get(url, headers=headers, timeout=20)
+        print(f"tushare status={resp.status_code} len={len(resp.text)} final_url={resp.url}")
+        resp.raise_for_status()
+
+        # 和你本地脚本保持一致，先落盘方便肉眼看
+        Path("东方财富.txt").write_text(resp.text, encoding="utf-8")
+        # 另存一份调试名，方便 Actions artifact 上传排查
+        Path("tushare_eastmoney.html").write_text(resp.text, encoding="utf-8")
+
+        news = parse_news_loose(resp.text, limit=80)
+        print(f"✅ tushare 宽松解析：{len(news)} 条；原始 HTML 已保存到 东方财富.txt / tushare_eastmoney.html")
+        return news
     except Exception as e:
         print(f"❌ 获取 tushare 资讯失败: {e}")
         return []
+
+
+def get_news():
+    """
+    资讯入口：不造演示数据。
+    抓不到/解析不到就返回空列表，避免展板混入假新闻。
+    """
+    return fetch_tushare_news()
 
 
 def save_to_db(indices, news_list):
@@ -271,23 +279,37 @@ def save_to_db(indices, news_list):
     today = datetime.now().strftime("%Y-%m-%d")
     now = datetime.now().strftime("%H:%M:%S")
 
-    # 删除当日旧数据（避免重复），保留其他日期历史
     c.execute("DELETE FROM indices WHERE trade_date = ?", (today,))
     c.execute("DELETE FROM news WHERE trade_date = ?", (today,))
 
     for item in indices:
-        c.execute('''
+        c.execute("""
             INSERT INTO indices (trade_date, market, code, name, close, change_pct, volume, update_time)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (today, item["market"], item["code"], item["name"],
-              item["close"], item["change_pct"], item.get("volume", 0), now))
+        """, (
+            today,
+            item["market"],
+            item["code"],
+            item["name"],
+            item["close"],
+            item["change_pct"],
+            item.get("volume", 0),
+            now,
+        ))
 
     for item in news_list:
-        c.execute('''
+        c.execute("""
             INSERT INTO news (trade_date, time, source, title, content, market, level)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (item["trade_date"], item["time"], item["source"], item["title"],
-              item["content"], item["market"], item["level"]))
+        """, (
+            item["trade_date"],
+            item["time"],
+            item["source"],
+            item["title"],
+            item["content"],
+            item["market"],
+            item["level"],
+        ))
 
     conn.commit()
     conn.close()
@@ -307,6 +329,8 @@ if __name__ == "__main__":
         indices += get_mock_indices()
 
     news = get_news()
+    if not news:
+        print("⚠️ 今日 news 为空：请查看 东方财富.txt 的 status/len，或检查 TUSHARE_COOKIE 权限")
+
     save_to_db(indices, news)
     print("完成")
-
