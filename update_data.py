@@ -231,30 +231,32 @@ def parse_tushare_news(html, limit=100):
             title, content = text, ""
 
         # 市场归属
-        # if any(k in text for k in ["港股", "恒生", "港交所", "香港"]):
-        #     market = "HK"
-        # elif any(k in text for k in ["日经", "日本", "日银", "日元"]):
-        #     market = "Japan"
-        # elif any(k in text for k in ["韩国", "KOSPI", "韩股", "首尔"]):
-        #     market = "Korea"
-        # else:
-        #     market = "China"
+        if any(k in text for k in ["港股", "恒生", "港交所", "香港"]):
+            market = "HK"
+        elif any(k in text for k in ["日经", "日本", "日银", "日元"]):
+            market = "Japan"
+        elif any(k in text for k in ["韩国", "KOSPI", "韩股", "首尔"]):
+            market = "Korea"
+        else:
+            market = "China"
 
         # # 重要级别
-        # if any(k in text for k in ["央行", "加息", "降息", "暴跌", "大跌",
-        #                            "涨停", "战争", "冲突", "制裁", "危机"]):
-        #     level = 1
-        # elif text.startswith("【"):
-        #     level = 2
-        # else:
-        #     level = 3
+        if any(k in text for k in ["央行", "加息", "降息", "暴跌", "大跌",
+                                   "涨停", "战争", "冲突", "制裁", "危机"]):
+            level = 1
+        elif text.startswith("【"):
+            level = 2
+        else:
+            level = 3
 
         news.append({
             "trade_date": today,
             "time": time_str,
             "source": "东方财富",
             "title": title[:120],
-            "content": content[:500]
+            "content": content[:500],
+            "market":market,
+            "level":level
         })
         if len(news) >= limit:
             break
