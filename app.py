@@ -7,6 +7,8 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 
+import plotly.express as px
+
 st.set_page_config(page_title="多市场每日数据展板", layout="wide")
 
 DB_PATH = "market.db"
@@ -114,7 +116,7 @@ st.subheader("📋 分市场行情")
 tab1, tab2, tab3, tab4 = st.tabs(["中国内地", "香港", "日本", "韩国"])
 
 
-def show_table(df, tab):
+def show_table(df, tab, mkt, mkt_label):
     with tab:
         if df.empty:
             st.info("暂无数据")
@@ -131,9 +133,31 @@ def show_table(df, tab):
             use_container_width=True, hide_index=True
         )
 
+        # ---- 新增：图表（Plotly 自带工具栏可下载 PNG）----
+        fig = px.bar(
+            display, x="指数名称", y="涨跌幅(%)",
+            title=f"{mkt_label} 指数涨跌幅（{date_str}）",
+            color="涨跌幅(%)",
+            color_continuous_scale=["#52c41a", "#d9d9d9", "#ff4d4f"],
+            color_continuous_midpoint=0,
+            text="涨跌幅(%)",
+        )
+        fig.update_traces(texttemplate="%{text:.2f}%", textposition="outside")
+        fig.update_layout(coloraxis_showscale=False, height=400)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # ---- 新增：CSV 下载按钮 ----
+        csv = display.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            label=f"⬇️ 下载{mkt_label}行情 CSV",
+            data=csv,
+            file_name=f"market_{mkt}_{date_str}.csv",
+            mime="text/csv",
+        )
+
 
 for mkt, tab in zip(["China", "HK", "Japan", "Korea"], [tab1, tab2, tab3, tab4]):
-    show_table(df_idx[df_idx["market"] == mkt], tab)
+    show_table(df_idx[df_idx["market"] == mkt], tab, mkt, markets[mkt])
 
 # ============ 重要信息 ============
 st.divider()
@@ -153,6 +177,16 @@ else:
                 st.caption(f"{row['time']} · {row['source']} · 影响：{row['market']} | {row['content']}")
             st.divider()
 
+# ---- 新增：重要信息下载 ----
+if not df_news.empty:
+    news_csv = df_news.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        label="⬇️ 下载重要信息 CSV",
+        data=news_csv,
+        file_name=f"news_{date_str}.csv",
+        mime="text/csv",
+    )
+
 # ============ 底部 ============
 st.divider()
 st.caption("""
@@ -161,4 +195,5 @@ st.caption("""
 - 日韩：东方财富实时接口（限流时显示模拟值）  
 - 新闻：演示数据（可后续接入 RSS/API）  
 - 历史数据可追溯，支持日期切换查看  
+- 图表可点击图片工具栏中的 📷 按钮下载 PNG；表格可通过下载按钮获取 CSV  
 """)
