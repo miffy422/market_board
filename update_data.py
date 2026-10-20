@@ -23,9 +23,14 @@ TENCENT_CODES = {
     "hkHSTECH": ("恒生科技指数", "HK"),
 }
 
+# CNBC 全球指数（日韩）—— 东方财富 push2 在 GitHub Actions 云服务器 IP 上常被挡，
+# 故日韩行情改用 CNBC 公开行情接口（对数据中心 IP 友好，返回干净 JSON）。
 CNBC_GLOBAL = [
     {"symbol": ".N225", "name": "日经225", "market": "Japan"},
     {"symbol": ".KS11", "name": "韩国综合指数", "market": "Korea"},
+    {"symbol": ".DJI", "name": "道琼斯指数", "market": "US"},
+    {"symbol": ".IXIC", "name": "纳斯达克指数", "market": "US"},
+    {"symbol": ".INX", "name": "标普500", "market": "US"},
 ]
 
 
@@ -103,10 +108,14 @@ def fetch_tencent():
 
 def fetch_global():
     """CNBC 行情接口 - 日韩（真实数据，带重试）
-     CNBC 返回 JSON，关键字段：
+
+    说明：原东方财富 push2 接口在 GitHub Actions 的云服务器 IP 上经常被挡
+    （返回空/非 JSON，导致 json 解析失败），因此日韩行情改用 CNBC 公开行情接口，
+    它对数据中心 IP 友好。CNBC 返回 JSON，关键字段：
         last                 最新价（带千分位逗号，如 "64,075.42"）
         change_pct          涨跌幅（带百分号，如 "-1.30%"）
         previous_day_closing 昨收
+    每个指数最多重试 3 次并做退避，两次请求之间留 1 秒间隔。
     """
     import time
     result = []
@@ -163,15 +172,15 @@ def fetch_global():
     return result
 
 
-# def get_mock_indices():
-#     """日韩备用数据（仅当接口全部异常时回退）"""
-#     print("⚠️ 日韩接口异常，使用模拟数据")
-#     return [
-#         {"market": "Japan", "code": "N225", "name": "日经225",
-#          "close": 38500.0, "change_pct": 0.5, "volume": 0},
-#         {"market": "Korea", "code": "KS11", "name": "韩国综合指数",
-#          "close": 2750.0, "change_pct": -0.3, "volume": 0},
-#     ]
+def get_mock_indices():
+    """日韩备用数据（仅当接口全部异常时回退）"""
+    print("⚠️ 日韩接口异常，使用模拟数据")
+    return [
+        {"market": "Japan", "code": "N225", "name": "日经225",
+         "close": 38500.0, "change_pct": 0.5, "volume": 0},
+        {"market": "Korea", "code": "KS11", "name": "韩国综合指数",
+         "close": 2750.0, "change_pct": -0.3, "volume": 0},
+    ]
 
 
 def _classify_market(text):
@@ -182,6 +191,10 @@ def _classify_market(text):
         return "Japan"
     if any(k in text for k in ["韩国", "KOSPI", "韩股", "首尔", "韩元"]):
         return "Korea"
+    if any(k in text for k in ["美股", "美国", "美联储", "纳斯达克", "道琼斯",
+                               "标普", "中概股", "中概", "华尔街", "欧央行",
+                               "欧洲央行", "欧洲", "地缘", "关税", "特朗普"]):
+        return "US"
     return "China"
 
 
@@ -197,6 +210,13 @@ def _classify_level(text):
 
 def fetch_eastmoney_news():
     """东方财富 7×24 快讯（公开接口，无需登录）
+
+    原 tushare.pro 爬虫依赖一个写死的浏览器 session cookie，cookie 过期后
+    服务器返回登录页空壳、抓不到任何新闻（现象：run_tushare_crawler 返回 200
+    但正文是 SPA 空壳，parse 后 0 条）。这里改为直接调用东方财富官方公开快讯
+    接口（即 tushare 原来抓取的同一数据源），无需任何鉴权，返回结构化 JSON。
+    接口返回形如 `var ajaxResult={...}`，需先去掉前缀再解析；新闻列表在
+    LivesList 字段，单条含 title(标题) / digest(摘要) / showtime(发布时间)。
     """
     import time
 
