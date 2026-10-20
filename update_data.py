@@ -5,6 +5,7 @@
 
 import os
 import re
+import json
 import html as html_lib
 import sqlite3
 import requests
@@ -22,8 +23,6 @@ TENCENT_CODES = {
     "hkHSTECH": ("恒生科技指数", "HK"),
 }
 
-# CNBC 全球指数（日韩）—— 东方财富 push2 在 GitHub Actions 云服务器 IP 上常被挡，
-# 故日韩行情改用 CNBC 公开行情接口（对数据中心 IP 友好，返回干净 JSON）。
 CNBC_GLOBAL = [
     {"symbol": ".N225", "name": "日经225", "market": "Japan"},
     {"symbol": ".KS11", "name": "韩国综合指数", "market": "Korea"},
@@ -104,7 +103,7 @@ def fetch_tencent():
 
 def fetch_global():
     """CNBC 行情接口 - 日韩（真实数据，带重试）
-    CNBC 返回 JSON，关键字段：
+     CNBC 返回 JSON，关键字段：
         last                 最新价（带千分位逗号，如 "64,075.42"）
         change_pct          涨跌幅（带百分号，如 "-1.30%"）
         previous_day_closing 昨收
@@ -164,147 +163,108 @@ def fetch_global():
     return result
 
 
-def get_mock_indices():
-    """日韩备用数据（仅当接口全部异常时回退）"""
-    print("⚠️ 日韩接口异常，使用模拟数据")
-    return [
-        {"market": "Japan", "code": "N225", "name": "日经225",
-         "close": 38500.0, "change_pct": 0.5, "volume": 0},
-        {"market": "Korea", "code": "KS11", "name": "韩国综合指数",
-         "close": 2750.0, "change_pct": -0.3, "volume": 0},
+# def get_mock_indices():
+#     """日韩备用数据（仅当接口全部异常时回退）"""
+#     print("⚠️ 日韩接口异常，使用模拟数据")
+#     return [
+#         {"market": "Japan", "code": "N225", "name": "日经225",
+#          "close": 38500.0, "change_pct": 0.5, "volume": 0},
+#         {"market": "Korea", "code": "KS11", "name": "韩国综合指数",
+#          "close": 2750.0, "change_pct": -0.3, "volume": 0},
+#     ]
+
+
+def _classify_market(text):
+    """根据新闻文本判断所属市场"""
+    if any(k in text for k in ["港股", "恒生", "港交所", "香港"]):
+        return "HK"
+    if any(k in text for k in ["日经", "日本", "日银", "日元", "东证"]):
+        return "Japan"
+    if any(k in text for k in ["韩国", "KOSPI", "韩股", "首尔", "韩元"]):
+        return "Korea"
+    return "China"
+
+
+def _classify_level(text):
+    """根据关键词判断重要级别"""
+    if any(k in text for k in ["央行", "加息", "降息", "暴跌", "大跌",
+                               "涨停", "战争", "冲突", "制裁", "危机"]):
+        return 1
+    if text.startswith("【"):
+        return 2
+    return 3
+
+
+def fetch_eastmoney_news():
+    """东方财富 7×24 快讯（公开接口，无需登录）
+    """
+    import time
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        ),
+        "Referer": "https://kuaixun.eastmoney.com/",
+    }
+    # zhiboall=全部实时快讯(70条)；102=全球股市快讯(兜底)
+    endpoints = [
+        "https://newsapi.eastmoney.com/kuaixun/v1/getlist_zhiboall_ajaxResult_70_1_.html",
+        "https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html",
     ]
-
-
-def run_tushare_crawler():
-    """tushare 东方财富资讯爬虫"""
-
-    # 登录
-    url = "https://tushare.pro/"
-    cookie="uid=2|1:0|10:1788145284|3:uid|8:NTQ3OTA1|f6d64bd9a071b7a948867f4d8d62123299f6222a4709f9d3b8bd909eb12713e7; username=2|1:0|10:1788145284|8:username|12:MTgwKioqMTA2|3b0b29c6e977540eaf922e1bad9d6d0ceb6ee8daa05f79df4703c5b861f702ec"
-    headers = {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br, zstd",
-        "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
-        "Connection": "keep-alive",
-        "Cookie": cookie,
-        "Host": "tushare.pro",
-        "If-None-Match": 'W/"59d60271fbbff712305f1faf07752d2691d3adb4"',
-        "Priority": "u=0, i",
-        "Referer": "https://tushare.pro/weborder/",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0",
-    }
-    session = requests.Session()
-    response = session.get(url, headers=headers)
-    if response.status_code==200:
-        print("登录成功")
-    else:
-        print("登录失败")
-        print(response.text)
-
-
-    # 请求资讯（东方财富）
-    url = "https://tushare.pro/news/eastmoney"
-    headers = {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br, zstd",
-        "Host": "tushare.pro",
-        "If-None-Match": 'W/"b825c874f94b4d4f8faba4c7ff9ec34cfb3a184f"',
-        "Priority": "u=0, i",
-        "Referer": "https://tushare.pro/news/sina",
-        "Sec-Fetch-Dest": "document",
-        "Cookie": cookie,
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1",
-    }
-    response = session.get(url, headers=headers)
-    print(response.status_code)
-
-    with open("东方财富.txt", "w", encoding="utf-8") as f:
-        f.write(response.text)
-
-    return response.text
-
-
-def parse_tushare_news(html, limit=100):
-    """
-    解析 tushare 东方财富资讯 HTML。
-    条目结构：
-      <div class="none_class news_item">
-          <div class="news_datetime">13:46</div>
-          <div class="news_content">【标题】正文...</div>
-      </div>
-    """
     today = datetime.now().strftime("%Y-%m-%d")
-    items = re.findall(
-        r'<div class="news_datetime">(\d{2}:\d{2})</div>\s*'
-        r'<div class="news_content">(.*?)</div>',
-        html, re.S,
-    )
-
-    news = []
-    seen = set()
-    for time_str, raw in items:
-        text = html_lib.unescape(re.sub(r"\s+", " ", raw)).strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-
-        # 有【标题】则拆开，否则整条作为标题
-        m = re.match(r"【(.+?)】(.*)", text)
-        if m:
-            title, content = m.group(1).strip(), m.group(2).strip()
-        else:
-            title, content = text, ""
-
-        # 市场归属
-        if any(k in text for k in ["港股", "恒生", "港交所", "香港"]):
-            market = "HK"
-        elif any(k in text for k in ["日经", "日本", "日银", "日元"]):
-            market = "Japan"
-        elif any(k in text for k in ["韩国", "KOSPI", "韩股", "首尔"]):
-            market = "Korea"
-        else:
-            market = "China"
-
-        # # 重要级别
-        if any(k in text for k in ["央行", "加息", "降息", "暴跌", "大跌",
-                                   "涨停", "战争", "冲突", "制裁", "危机"]):
-            level = 1
-        elif text.startswith("【"):
-            level = 2
-        else:
-            level = 3
-
-        news.append({
-            "trade_date": today,
-            "time": time_str,
-            "source": "东方财富",
-            "title": title[:120],
-            "content": content[:500],
-            "market":market,
-            "level":level
-        })
-        if len(news) >= limit:
-            break
-
-    print(f"✅ 解析资讯：{len(news)} 条")
-    return news
+    last_err = ""
+    for url in endpoints:
+        for attempt in range(3):
+            try:
+                resp = requests.get(url, headers=headers, timeout=10)
+                text = resp.text
+                if not text.startswith("var ajaxResult="):
+                    raise ValueError("返回格式异常(可能被拦截)")
+                payload = json.loads(text[len("var ajaxResult="):].strip())
+                lives = payload.get("LivesList") or []
+                if not lives:
+                    raise ValueError("LivesList 为空")
+                news = []
+                seen = set()
+                for it in lives:
+                    title = (it.get("title") or it.get("simtitle") or "").strip()
+                    digest = (it.get("digest") or it.get("simdigest") or "").strip()
+                    if not title:
+                        continue
+                    key = title + "|" + digest
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    showtime = it.get("showtime") or it.get("ordertime") or ""
+                    m = re.search(r"(\d{2}:\d{2})", showtime)
+                    t = m.group(1) if m else ""
+                    full = f"{title} {digest}"
+                    news.append({
+                        "trade_date": today,
+                        "time": t,
+                        "source": "东方财富",
+                        "title": title[:120],
+                        "content": digest[:500],
+                        "market": _classify_market(full),
+                        "level": _classify_level(full),
+                    })
+                print(f"✅ 东方财富快讯：{len(news)} 条")
+                return news
+            except Exception as e:
+                last_err = str(e)
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+    print(f"⚠️ 东方财富快讯获取失败: {last_err}")
+    return []
 
 
 def get_news():
-    """抓取 tushare 东方财富资讯并解析入库"""
+    """获取新闻资讯（东方财富 7×24 快讯）"""
     try:
-        html = run_tushare_crawler()
-        return parse_tushare_news(html)
+        return fetch_eastmoney_news()
     except Exception as e:
-        print(f"❌ 获取 tushare 资讯失败: {e}")
+        print(f"❌ 获取新闻资讯失败: {e}")
         return []
 
 
@@ -356,4 +316,3 @@ if __name__ == "__main__":
 
     save_to_db(indices, news)
     print("完成")
-
