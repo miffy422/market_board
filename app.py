@@ -12,6 +12,7 @@ import plotly.express as px
 st.set_page_config(page_title="多市场每日数据展板", layout="wide")
 
 DB_PATH = "market.db"
+ALERT_THRESHOLD = 2.0  # 异常波动预警阈值（涨跌幅绝对值，单位 %）
 
 
 def load_data(date_str):
@@ -47,7 +48,7 @@ def get_available_dates():
 
 # ============ 页面标题 ============
 st.title("📊 多市场二级市场数据展板")
-st.caption("每日17:00统一截面 | 中国内地 · 香港 · 日本 · 韩国")
+st.caption("每日17:00统一截面 | 中国内地 · 香港 · 日本 · 韩国 · 美国")
 
 # ============ 数据库检查 ============
 if not os.path.exists(DB_PATH):
@@ -93,8 +94,8 @@ st.caption(f"数据更新时间：{date_str} {latest_update}")
 st.divider()
 st.subheader("🌍 全球市场概览")
 
-markets = {"China": "🇨🇳 中国内地", "HK": "🇭🇰 香港", "Japan": "🇯🇵 日本", "Korea": "🇰🇷 韩国"}
-cols = st.columns(4)
+markets = {"China": "🇨🇳 中国内地", "HK": "🇭🇰 香港", "Japan": "🇯🇵 日本", "Korea": "🇰🇷 韩国", "US": "🇺🇸 美国"}
+cols = st.columns(len(markets))
 
 for i, (mkt, label) in enumerate(markets.items()):
     with cols[i]:
@@ -113,7 +114,7 @@ for i, (mkt, label) in enumerate(markets.items()):
 st.divider()
 st.subheader("📋 分市场行情")
 
-tab1, tab2, tab3, tab4 = st.tabs(["中国内地", "香港", "日本", "韩国"])
+tabs = st.tabs(list(markets.values()))
 
 
 def show_table(df, tab, mkt, mkt_label):
@@ -122,7 +123,10 @@ def show_table(df, tab, mkt, mkt_label):
             st.info("暂无数据")
             return
         display = df[["name", "close", "change_pct"]].copy()
-        display.columns = ["指数名称", "最新价", "涨跌幅(%)"]
+        display["异动"] = display["change_pct"].apply(
+            lambda v: "⚠️" if abs(v) >= ALERT_THRESHOLD else ""
+        )
+        display.columns = ["指数名称", "最新价", "涨跌幅(%)", "异动"]
 
         def color_pct(val):
             color = "#ff4d4f" if val > 0 else "#52c41a" if val < 0 else "black"
@@ -156,8 +160,50 @@ def show_table(df, tab, mkt, mkt_label):
         )
 
 
-for mkt, tab in zip(["China", "HK", "Japan", "Korea"], [tab1, tab2, tab3, tab4]):
-    show_table(df_idx[df_idx["market"] == mkt], tab, mkt, markets[mkt])
+def render_summary(df_idx, df_news):
+    """当日盘面智能总结（规则引擎 v1）：全市场广度 + 各市场领涨领跌 + 新闻统计 + 异常波动预警。"""
+    st.subheader("📊 当日盘面总结")
+    if df_idx.empty:
+        st.info("暂无行情数据")
+        return
+    up = int((df_idx["change_pct"] > 0).sum())
+    down = int((df_idx["change_pct"] < 0).sum())
+    flat = int((df_idx["change_pct"] == 0).sum())
+    st.markdown(
+        f"**全市场广度**：🟥 上涨 {up} · 🟩 下跌 {down} · ➖ 平 {flat}"
+        f"（共 {len(df_idx)} 个指数）"
+    )
+    lines = []
+    for mkt, label in markets.items():
+        sub = df_idx[df_idx["market"] == mkt]
+        if sub.empty:
+            continue
+        top = sub.loc[sub["change_pct"].idxmax()]
+        bot = sub.loc[sub["change_pct"].idxmin()]
+        lines.append(
+            f"- {label}：领涨 **{top['name']} {top['change_pct']:+.2f}%**，"
+            f"领跌 **{bot['name']} {bot['change_pct']:+.2f}%**"
+        )
+    if lines:
+        st.markdown("\n".join(lines))
+    if not df_news.empty:
+        lvl1 = int((df_news["level"] == 1).sum())
+        st.markdown(f"**重要信息**：共 {len(df_news)} 条，其中 🔴 高优先级 {lvl1} 条")
+    flagged = df_idx[df_idx["change_pct"].abs() >= ALERT_THRESHOLD]
+    if not flagged.empty:
+        items = "、".join(
+            f"{r['name']} {r['change_pct']:+.2f}%" for _, r in flagged.iterrows()
+        )
+        st.error(f"⚠️ **异常波动预警**（|涨跌幅| ≥ {ALERT_THRESHOLD:.0f}%）：{items}")
+    else:
+        st.success(f"✅ 当日无异常波动（阈值 {ALERT_THRESHOLD:.0f}%）")
+
+
+for i, (mkt, label) in enumerate(markets.items()):
+    show_table(df_idx[df_idx["market"] == mkt], tabs[i], mkt, label)
+
+# ============ 当日盘面总结 ============
+render_summary(df_idx, df_news)
 
 # ============ 重要信息 ============
 st.divider()
@@ -191,10 +237,9 @@ if not df_news.empty:
 st.divider()
 st.caption("""
 **数据说明**  
-- A股/港股：腾讯财经
-- 日韩：CNBC  
-- 新闻：东方财富 7×24 快讯 
+- A股/港股：腾讯财经实时接口  
+- 日韩/美股：CNBC 行情接口  
+- 新闻：东方财富 7×24 快讯（公开接口）  
 - 历史数据可追溯，支持日期切换查看  
 - 图表可点击图片工具栏中的 📷 按钮下载 PNG；表格可通过下载按钮获取 CSV  
 """)
-
