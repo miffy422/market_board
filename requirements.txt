@@ -2,3 +2,4 @@ streamlit>=1.28
 pandas
 requests
 beautifulsoup4
+plotly>=5.0
