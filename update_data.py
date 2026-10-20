@@ -102,27 +102,34 @@ def fetch_tencent():
 
 
 def fetch_global():
-    """东方财富 - 日韩"""
+    """东方财富 - 日韩（真实数据）
+
+    说明：东方财富 push2 接口返回的 f43(最新价)/f60(昨收) 为「真实值 × 100」，
+    涨跌幅由 (f43 - f60) / f60 计算，避免依赖易变的字段含义。
+    """
     result = []
     headers = {"User-Agent": "Mozilla/5.0"}
     for item in EASTMONEY_GLOBAL:
         try:
             url = (
                 "http://push2.eastmoney.com/api/qt/stock/get"
-                f"?secid={item['secid']}&fields=f43,f44,f57,f58,f60"
+                f"?secid={item['secid']}&fields=f43,f57,f58,f60"
             )
             resp = requests.get(url, headers=headers, timeout=10)
             data = resp.json().get("data", {}) or {}
-            close = data.get("f43", 0) or 0
-            change_pct = data.get("f58", 0) or 0
-            if close > 10000:
-                close = close / 100
+            raw_close = data.get("f43", 0) or 0   # 真实价 ×100
+            raw_prev = data.get("f60", 0) or 0     # 昨收 ×100
+            if not raw_close or not raw_prev:
+                print(f"⚠️ {item['name']} 返回为空，跳过")
+                continue
+            close = round(raw_close / 100, 2)
+            change_pct = round((raw_close - raw_prev) / raw_prev * 100, 2)
             result.append({
                 "market": item["market"],
                 "code": item["secid"],
                 "name": item["name"],
-                "close": round(close, 2),
-                "change_pct": round(change_pct, 2),
+                "close": close,
+                "change_pct": change_pct,
                 "volume": 0,
             })
             print(f"✅ {item['name']}: {close} ({change_pct}%)")
@@ -132,8 +139,8 @@ def fetch_global():
 
 
 def get_mock_indices():
-    """日韩备用数据"""
-    print("⚠️ 日韩使用模拟数据")
+    """日韩备用数据（仅当接口全部异常时回退）"""
+    print("⚠️ 日韩接口异常，使用模拟数据")
     return [
         {"market": "Japan", "code": "N225", "name": "日经225",
          "close": 38500.0, "change_pct": 0.5, "volume": 0},
@@ -323,3 +330,4 @@ if __name__ == "__main__":
 
     save_to_db(indices, news)
     print("完成")
+
