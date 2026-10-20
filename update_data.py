@@ -102,39 +102,53 @@ def fetch_tencent():
 
 
 def fetch_global():
-    """东方财富 - 日韩（真实数据）
+    """东方财富 - 日韩（真实数据，带重试）
 
     说明：东方财富 push2 接口返回的 f43(最新价)/f60(昨收) 为「真实值 × 100」，
-    涨跌幅由 (f43 - f60) / f60 计算，避免依赖易变的字段含义。
+    涨跌幅由 (f43 - f60) / f60 计算。云服务器 IP（如 GitHub Actions）易被接口
+    限流/瞬时断开，单次请求可能返回空、超时或被重置——这里对每个指数最多重试
+    3 次并做退避，且两次请求之间留 1 秒间隔，把瞬时失败降到最低。
+    （注：不要给该接口加 ut/invt/Referer 等额外参数，会触发东财连接重置。）
     """
+    import time
     result = []
     headers = {"User-Agent": "Mozilla/5.0"}
     for item in EASTMONEY_GLOBAL:
-        try:
-            url = (
-                "http://push2.eastmoney.com/api/qt/stock/get"
-                f"?secid={item['secid']}&fields=f43,f57,f58,f60"
-            )
-            resp = requests.get(url, headers=headers, timeout=10)
-            data = resp.json().get("data", {}) or {}
-            raw_close = data.get("f43", 0) or 0   # 真实价 ×100
-            raw_prev = data.get("f60", 0) or 0     # 昨收 ×100
-            if not raw_close or not raw_prev:
-                print(f"⚠️ {item['name']} 返回为空，跳过")
-                continue
-            close = round(raw_close / 100, 2)
-            change_pct = round((raw_close - raw_prev) / raw_prev * 100, 2)
-            result.append({
-                "market": item["market"],
-                "code": item["secid"],
-                "name": item["name"],
-                "close": close,
-                "change_pct": change_pct,
-                "volume": 0,
-            })
-            print(f"✅ {item['name']}: {close} ({change_pct}%)")
-        except Exception as e:
-            print(f"⚠️ {item['name']} 失败: {e}")
+        data = None
+        last_err = ""
+        for attempt in range(3):
+            try:
+                url = (
+                    "http://push2.eastmoney.com/api/qt/stock/get"
+                    f"?secid={item['secid']}&fields=f43,f57,f58,f60"
+                )
+                resp = requests.get(url, headers=headers, timeout=10)
+                payload = resp.json()
+                data = payload.get("data") or {}
+                if data.get("f43") and data.get("f60"):
+                    break
+                last_err = f"空数据(rc={payload.get('rc')})"
+            except Exception as e:
+                last_err = str(e)
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+        if not data or not data.get("f43") or not data.get("f60"):
+            print(f"⚠️ {item['name']} 失败: {last_err}")
+            continue
+        raw_close = data["f43"]   # 真实价 ×100
+        raw_prev = data["f60"]     # 昨收 ×100
+        close = round(raw_close / 100, 2)
+        change_pct = round((raw_close - raw_prev) / raw_prev * 100, 2)
+        result.append({
+            "market": item["market"],
+            "code": item["secid"],
+            "name": item["name"],
+            "close": close,
+            "change_pct": change_pct,
+            "volume": 0,
+        })
+        print(f"✅ {item['name']}: {close} ({change_pct}%)")
+        time.sleep(1)  # 两次请求间留间隔，规避限流
     return result
 
 
@@ -330,4 +344,3 @@ if __name__ == "__main__":
 
     save_to_db(indices, news)
     print("完成")
-
