@@ -1,6 +1,6 @@
 """
 共享数据与渲染组件
-供主页面 app.py 与 pages/ 下的独立页面（如「重要信息」）复用，
+供主页面 app.py 与 pages/ 下的独立页面（如「News / 重要信息」）复用，
 避免多页面之间重复实现数据库读取与图表渲染逻辑。
 """
 import os
@@ -235,7 +235,7 @@ def render_summary(df_idx, df_news):
         lvl1 = int((df_news["level"] == 1).sum())
         st.markdown(
             f"**重要信息**：共 {len(df_news)} 条，其中 🔴 高优先级 {lvl1} 条"
-            f"（详见左侧「重要信息」页面）"
+            f"（详见左侧「News / 重要信息」页面）"
         )
     flagged = df_idx[df_idx["change_pct"].abs() >= ALERT_THRESHOLD]
     if not flagged.empty:
