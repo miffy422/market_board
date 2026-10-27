@@ -166,14 +166,16 @@ def show_table(df, tab, mkt, mkt_label, date_str):
             plot_df = pivot.reset_index().melt(
                 id_vars="trade_date", var_name="指数", value_name="涨跌幅(%)"
             )
+            # x 轴按「交易日」离散展示（category），双休日等非交易日不占刻度位
             fig = px.line(
                 plot_df, x="trade_date", y="涨跌幅(%)", color="指数",
                 markers=True,
-                title=f"{mkt_label} 涨跌幅走势（近 {len(pivot)} 日）",
-                labels={"trade_date": "日期", "涨跌幅(%)": "涨跌幅(%)", "指数": "指数"},
+                title=f"{mkt_label} 涨跌幅走势（近 {len(pivot)} 个交易日）",
+                labels={"trade_date": "交易日", "涨跌幅(%)": "涨跌幅(%)", "指数": "指数"},
             )
             fig.add_hline(y=0, line_width=1, line_color="#999999")
             fig.update_layout(height=420)
+            fig.update_xaxes(type="category", tickformat="%m-%d")
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("历史数据不足（需 ≥2 个交易日），以下为当日柱状图")
