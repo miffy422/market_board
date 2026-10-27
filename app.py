@@ -22,7 +22,7 @@ from common import (
 st.set_page_config(page_title="多市场每日数据展板", layout="wide")
 
 # ============ 页面导航============
-st.sidebar.page_link("market_board/pages/1_News.py", label="📰 重要信息 / News", icon="📰")
+st.sidebar.page_link("pages/1_News.py", label="📰 重要信息 / News", icon="📰")
 
 # ============ 页面标题 ============
 st.title("📊 多市场二级市场数据展板")
