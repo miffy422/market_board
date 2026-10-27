@@ -10,7 +10,7 @@ from common import MARKETS, check_db, load_data, select_date
 st.set_page_config(page_title="📰 News", page_icon="📰", layout="wide")
 
 st.title("📰 重要信息")
-st.caption("东方财富 7×24 快讯 | 按重要等级分色，可筛选与下载")
+st.caption("东方财富 7×24 快讯")
 
 # ============ 数据库检查 ============
 check_db()
