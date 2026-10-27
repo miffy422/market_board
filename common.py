@@ -212,6 +212,7 @@ def render_all_market_change(df_idx, date_str):
     base["市场"] = base["market"].map(MARKETS)
 
     view = st.radio(
+        " ",
         ["按指数（全部品种）", "按市场（平均涨跌幅）"],
         horizontal=True,
         key="all_change_view",
@@ -407,4 +408,3 @@ def render_yields(yields_df, date_str):
         file_name=f"yields_{date_str}.csv",
         mime="text/csv",
     )
-
