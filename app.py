@@ -21,10 +21,12 @@ from common import (
 
 st.set_page_config(page_title="多市场每日数据展板", layout="wide")
 
+# ============ 页面导航============
+st.sidebar.page_link("pages/1_News.py", label="📰 重要信息 / News", icon="📰")
+
 # ============ 页面标题 ============
 st.title("📊 多市场二级市场数据展板")
 st.caption("每日17:00统一截面 | 中国内地 · 香港 · 日本 · 韩国 · 美国 · 大宗商品")
-st.caption("📰 「重要信息 / News」已独立成页 —— 请从左侧页面导航进入")
 
 # ============ 数据库检查 ============
 check_db()
@@ -91,4 +93,3 @@ st.caption("""
 - 历史数据可追溯，支持日期切换查看  
 - 图表可点击图片工具栏中的 📷 按钮下载 PNG；表格可通过下载按钮获取 CSV  
 """)
-
