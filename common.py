@@ -24,6 +24,9 @@ MARKETS = {
     "Commodity": "🛢️ 大宗商品",
 }
 
+# 仅含五大股市（大宗商品在「分市场行情」标签页单独展示，不混入全市场涨跌幅对比图）
+STOCK_MARKETS = {k: v for k, v in MARKETS.items() if k != "Commodity"}
+
 
 # ============ 数据读取 ============
 def check_db():
@@ -93,8 +96,56 @@ def color_pct(val):
     return f"color: {color}; font-weight: bold"
 
 
+def _bar_fig(display, mkt_label, date_str):
+    """各市场当日涨跌幅柱状图（红涨绿跌）"""
+    fig = px.bar(
+        display, x="指数名称", y="涨跌幅(%)",
+        title=f"{mkt_label} 指数涨跌幅（{date_str}）",
+        color="涨跌幅(%)",
+        color_continuous_scale=["#52c41a", "#d9d9d9", "#ff4d4f"],
+        color_continuous_midpoint=0,
+        text="涨跌幅(%)",
+    )
+    fig.update_traces(texttemplate="%{text:.2f}%", textposition="outside")
+    fig.update_layout(coloraxis_showscale=False, height=400)
+    return fig
+
+
+def render_china_trend(end_date, n_days=10):
+    """中国内地主要指数「近几日涨跌幅」走势（折线图数据源）
+
+    返回以 trade_date 为索引、各指数为列的透视表；
+    若截至 end_date 的历史交易日不足 2 天则返回 None（调用方回退柱状图）。
+    """
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        dates = pd.read_sql_query(
+            "SELECT DISTINCT trade_date FROM indices "
+            "WHERE trade_date <= ? ORDER BY trade_date DESC LIMIT ?",
+            conn, params=(end_date, n_days)
+        )["trade_date"].tolist()
+        if len(dates) < 2:
+            return None
+        dates_sorted = sorted(dates)
+        qmarks = ",".join("?" * len(dates_sorted))
+        df = pd.read_sql_query(
+            f"SELECT trade_date, name, change_pct FROM indices "
+            f"WHERE market='China' AND trade_date IN ({qmarks})",
+            conn, params=tuple(dates_sorted)
+        )
+    finally:
+        conn.close()
+    if df.empty:
+        return None
+    return df.pivot_table(index="trade_date", columns="name", values="change_pct")
+
+
 def show_table(df, tab, mkt, mkt_label, date_str):
-    """单个市场的行情表格 + 涨跌幅柱状图 + CSV 下载"""
+    """单个市场的行情表格 + 涨跌幅图 + CSV 下载
+
+    中国内地：展示「近几日涨跌幅折线图」（多指数走势）；
+    其他市场：当日涨跌幅柱状图。历史数据不足 2 个交易日时中国内地回退为柱状图。
+    """
     with tab:
         if df.empty:
             st.info("暂无数据")
@@ -110,17 +161,26 @@ def show_table(df, tab, mkt, mkt_label, date_str):
             use_container_width=True, hide_index=True
         )
 
-        fig = px.bar(
-            display, x="指数名称", y="涨跌幅(%)",
-            title=f"{mkt_label} 指数涨跌幅（{date_str}）",
-            color="涨跌幅(%)",
-            color_continuous_scale=["#52c41a", "#d9d9d9", "#ff4d4f"],
-            color_continuous_midpoint=0,
-            text="涨跌幅(%)",
-        )
-        fig.update_traces(texttemplate="%{text:.2f}%", textposition="outside")
-        fig.update_layout(coloraxis_showscale=False, height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        if mkt == "China":
+            pivot = render_china_trend(date_str)
+            if pivot is not None and not pivot.empty and len(pivot) >= 2:
+                plot_df = pivot.reset_index().melt(
+                    id_vars="trade_date", var_name="指数", value_name="涨跌幅(%)"
+                )
+                fig = px.line(
+                    plot_df, x="trade_date", y="涨跌幅(%)", color="指数",
+                    markers=True,
+                    title=f"中国内地主要指数涨跌幅走势（近 {len(pivot)} 日，截至 {date_str}）",
+                    labels={"trade_date": "日期", "涨跌幅(%)": "涨跌幅(%)", "指数": "指数"},
+                )
+                fig.add_hline(y=0, line_width=1, line_color="#999999")
+                fig.update_layout(height=420)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("历史数据不足（需 ≥2 个交易日）暂无法绘制走势图，以下为当日柱状图")
+                st.plotly_chart(_bar_fig(display, mkt_label, date_str), use_container_width=True)
+        else:
+            st.plotly_chart(_bar_fig(display, mkt_label, date_str), use_container_width=True)
 
         csv = display.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
@@ -138,8 +198,9 @@ def render_all_market_change(df_idx, date_str):
       1. 按指数：全部品种横向条形排序，条形方向表示涨跌（向右涨/向左跌），
          按中国惯例红涨绿跌着色，市场名前缀区分所属市场；
       2. 按市场：每个市场一根条形（该市场各指数涨跌幅均值）。
-    注：国债利差行的 change_pct 是"利差的变动百分比"，口径与价格涨跌幅不同，
-    故此处只对比六大市场，利差另见国债收益率区块。
+    注：仅含五大股市（中国内地/香港/日本/韩国/美国）；大宗商品涨跌幅在「分市场行情」
+    标签页单独展示，不混在此图。国债利差行的 change_pct 是"利差的变动百分比"，
+    口径与价格涨跌幅不同，利差另见国债收益率区块。
     """
     st.divider()
     st.subheader("📊 全市场涨跌幅对比（一张图）")
@@ -148,7 +209,7 @@ def render_all_market_change(df_idx, date_str):
         st.info("暂无行情数据")
         return
 
-    base = df_idx[df_idx["market"].isin(MARKETS.keys())].copy()
+    base = df_idx[df_idx["market"].isin(STOCK_MARKETS.keys())].copy()
     if base.empty:
         st.info("暂无可对比的市场行情")
         return
@@ -201,6 +262,7 @@ def render_all_market_change(df_idx, date_str):
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
         "条形向右为上涨、向左为下跌（红涨绿跌）。"
+        "大宗商品涨跌幅见上方「分市场行情 · 🛢️ 大宗商品」标签页；"
         "国债利差变动口径与价格涨跌幅不同，另见下方「中美国债收益率曲线与利差」。"
     )
 
