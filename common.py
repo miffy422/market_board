@@ -212,7 +212,6 @@ def render_all_market_change(df_idx, date_str):
     base["市场"] = base["market"].map(MARKETS)
 
     view = st.radio(
-        "对比视角",
         ["按指数（全部品种）", "按市场（平均涨跌幅）"],
         horizontal=True,
         key="all_change_view",
