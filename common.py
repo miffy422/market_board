@@ -96,6 +96,12 @@ def color_pct(val):
     return f"color: {color}; font-weight: bold"
 
 
+def _apply_dark(fig):
+    """套用暗色图表模板（黑底），与 Streamlit 暗色主题保持一致"""
+    fig.update_layout(template="plotly_dark")
+    return fig
+
+
 def _bar_fig(display, mkt_label, date_str):
     """各市场当日涨跌幅柱状图（红涨绿跌）"""
     fig = px.bar(
@@ -108,7 +114,7 @@ def _bar_fig(display, mkt_label, date_str):
     )
     fig.update_traces(texttemplate="%{text:.2f}%", textposition="outside")
     fig.update_layout(coloraxis_showscale=False, height=400)
-    return fig
+    return _apply_dark(fig)
 
 
 def render_trend(end_date, mkt, n_days=5):
@@ -176,6 +182,7 @@ def show_table(df, tab, mkt, mkt_label, date_str):
             fig.add_hline(y=0, line_width=1, line_color="#999999")
             fig.update_layout(height=420)
             fig.update_xaxes(type="category", tickformat="%m-%d")
+            _apply_dark(fig)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("历史数据不足（需 ≥2 个交易日），以下为当日柱状图")
@@ -240,6 +247,7 @@ def render_all_market_change(df_idx, date_str):
         fig.update_layout(
             coloraxis_showscale=False,
             height=max(420, 26 * len(plot_df) + 140),
+            template="plotly_dark",
         )
     else:
         agg = base.groupby("市场", as_index=False)["change_pct"].mean()
@@ -254,7 +262,7 @@ def render_all_market_change(df_idx, date_str):
             labels={"change_pct": "平均涨跌幅(%)", "市场": ""},
         )
         fig.update_traces(texttemplate="%{text:+.2f}%", textposition="outside")
-        fig.update_layout(coloraxis_showscale=False, height=420)
+        fig.update_layout(coloraxis_showscale=False, height=420, template="plotly_dark")
 
     fig.add_vline(x=0, line_width=1, line_color="#999999")
     st.plotly_chart(fig, use_container_width=True)
@@ -335,6 +343,7 @@ def render_yields(yields_df, date_str):
     )
     fig.update_layout(height=420, xaxis_title="期限", yaxis_title="收益率(%)")
     fig.update_traces(line=dict(width=3))
+    _apply_dark(fig)
     st.plotly_chart(fig, use_container_width=True)
 
     # ---- 2) 关键利差指标卡 ----
@@ -410,3 +419,4 @@ def render_yields(yields_df, date_str):
         file_name=f"yields_{date_str}.csv",
         mime="text/csv",
     )
+
