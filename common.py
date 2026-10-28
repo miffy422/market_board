@@ -364,7 +364,7 @@ def render_industry(df, date_str):
 
 def render_summary(df_idx, df_news):
     """当日盘面智能总结（规则引擎 v1）：全市场广度 + 各市场领涨领跌 + 新闻统计 + 异常波动预警。"""
-    st.subheader("📊 当日盘面总结")
+    st.subheader("💡当日盘面总结")
     if df_idx.empty:
         st.info("暂无行情数据")
         return
