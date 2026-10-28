@@ -13,6 +13,7 @@ from common import (
     load_data,
     load_yields,
     render_all_market_change,
+    render_industry,
     render_summary,
     render_yields,
     select_date,
@@ -68,10 +69,13 @@ render_all_market_change(df_idx, date_str)
 st.divider()
 st.subheader("📋 分市场行情")
 
-tabs = st.tabs(list(MARKETS.values()))
+tabs = st.tabs(list(MARKETS.values()) + ["🏭 行业板块"])
 
 for i, (mkt, label) in enumerate(MARKETS.items()):
     show_table(df_idx[df_idx["market"] == mkt], tabs[i], mkt, label, date_str)
+
+with tabs[-1]:
+    render_industry(df_idx[df_idx["market"] == "CNIndustry"], date_str)
 
 # ============ 当日盘面总结 ============
 render_summary(df_idx, df_news)
