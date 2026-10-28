@@ -10,6 +10,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import plotly.graph_objects as go
 
 DB_PATH = "market.db"
 ALERT_THRESHOLD = 2.0  # 异常波动预警阈值（涨跌幅绝对值，单位 %）
@@ -26,6 +27,10 @@ MARKETS = {
 
 # 仅含五大股市（大宗商品在「分市场行情」标签页单独展示，不混入全市场涨跌幅对比图）
 STOCK_MARKETS = {k: v for k, v in MARKETS.items() if k != "Commodity"}
+
+# 行业板块（热力图）在 indices 表中以独立 market 标签存储，不计入市场概览 /
+# 全市场对比图 / 盘面总结广度，仅在其专属页签展示。
+INDUSTRY_MARKET = "CNIndustry"
 
 
 # ============ 数据读取 ============
@@ -96,6 +101,28 @@ def color_pct(val):
     return f"color: {color}; font-weight: bold"
 
 
+def _fmt_turnover(v):
+    """成交额（元）→ 亿/万 自适应显示"""
+    if v is None or v == 0:
+        return "—"
+    if abs(v) >= 1e8:
+        return f"{v / 1e8:.1f}亿"
+    if abs(v) >= 1e4:
+        return f"{v / 1e4:.1f}万"
+    return f"{v:.0f}"
+
+
+def _fmt_volume(v):
+    """成交量（手/股/合约）→ 亿/万 自适应显示"""
+    if v is None or v == 0:
+        return "—"
+    if abs(v) >= 1e8:
+        return f"{v / 1e8:.2f}亿"
+    if abs(v) >= 1e4:
+        return f"{v / 1e4:.1f}万"
+    return f"{v:.0f}"
+
+
 def _apply_dark(fig):
     """套用暗色图表模板（黑底），与 Streamlit 暗色主题保持一致"""
     fig.update_layout(template="plotly_dark")
@@ -156,11 +183,14 @@ def show_table(df, tab, mkt, mkt_label, date_str):
         if df.empty:
             st.info("暂无数据")
             return
-        display = df[["name", "close", "change_pct"]].copy()
+        display = df[["name", "close", "change_pct", "turnover", "volume"]].copy()
+        display["成交额"] = display["turnover"].apply(_fmt_turnover)
+        display["成交量"] = display["volume"].apply(_fmt_volume)
         display["异动"] = display["change_pct"].apply(
             lambda v: "⚠️" if abs(v) >= ALERT_THRESHOLD else ""
         )
-        display.columns = ["指数名称", "最新价", "涨跌幅(%)", "异动"]
+        display = display[["name", "close", "change_pct", "成交额", "成交量", "异动"]]
+        display.columns = ["指数名称", "最新价", "涨跌幅(%)", "成交额", "成交量", "异动"]
 
         st.dataframe(
             display.style.map(color_pct, subset=["涨跌幅(%)"]),
@@ -221,7 +251,7 @@ def render_all_market_change(df_idx, date_str):
     base["市场"] = base["market"].map(MARKETS)
 
     view = st.radio(
-        " ",
+        "对比视角",
         ["按指数（全部品种）", "按市场（平均涨跌幅）"],
         horizontal=True,
         key="all_change_view",
@@ -268,18 +298,86 @@ def render_all_market_change(df_idx, date_str):
     st.plotly_chart(fig, use_container_width=True)
 
 
+def render_industry(df, date_str):
+    """行业板块涨跌热力图（色块矩阵）+ 涨跌幅排行榜
+
+    数据来自 indices 表 market='CNIndustry'（update_data 抓取）。
+    热力图：按涨跌幅着色的色块矩阵（红涨绿跌），一眼看清行业冷热；
+    排行榜：按涨跌幅降序的明细表（含 CSV 下载）。
+    """
+    if df.empty:
+        st.info("暂无行业板块数据")
+        return
+    data = df[df["change_pct"].notna()].copy()
+    if data.empty:
+        st.info("暂无行业板块数据")
+        return
+
+    cols = 6
+    n = len(data)
+    rows = (n + cols - 1) // cols
+    data = data.sort_values("change_pct", ascending=False).reset_index(drop=True)
+
+    z = [[None] * cols for _ in range(rows)]
+    labels = [[""] * cols for _ in range(rows)]
+    for i, (_, r) in enumerate(data.iterrows()):
+        rr, cc = divmod(i, cols)
+        z[rr][cc] = r["change_pct"]
+        labels[rr][cc] = f"{r['name']}\n{r['change_pct']:+.2f}%"
+
+    fig = go.Figure(go.Heatmap(
+        z=z,
+        text=labels,
+        texttemplate="%{text}",
+        textfont={"size": 12},
+        colorscale=["#52c41a", "#1f2630", "#ff4d4f"],
+        zmid=0,
+        xgap=4, ygap=4,
+        showscale=True,
+        colorbar={"title": "涨跌幅(%)"},
+        hovertemplate="%{text}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=max(300, 70 * rows),
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False, autorange="reversed"),
+    )
+    _apply_dark(fig)
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("色块颜色：红涨绿跌；鼠标悬停查看行业名称与涨跌幅。")
+
+    # ---- 涨跌幅排行榜 ----
+    st.markdown("**行业涨跌幅排行榜**")
+    rank = data[["name", "change_pct"]].copy()
+    rank.columns = ["行业", "涨跌幅(%)"]
+    rank = rank.sort_values("涨跌幅(%)", ascending=False)
+    st.dataframe(
+        rank.style.map(color_pct, subset=["涨跌幅(%)"]),
+        use_container_width=True, hide_index=True
+    )
+    csv = rank.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        label="⬇️ 下载行业涨跌 CSV",
+        data=csv,
+        file_name=f"industry_{date_str}.csv",
+        mime="text/csv",
+    )
+
+
 def render_summary(df_idx, df_news):
     """当日盘面智能总结（规则引擎 v1）：全市场广度 + 各市场领涨领跌 + 新闻统计 + 异常波动预警。"""
     st.subheader("📊 当日盘面总结")
     if df_idx.empty:
         st.info("暂无行情数据")
         return
-    up = int((df_idx["change_pct"] > 0).sum())
-    down = int((df_idx["change_pct"] < 0).sum())
-    flat = int((df_idx["change_pct"] == 0).sum())
+    # 广度仅统计六大市场核心指数，排除行业板块与国债利差行
+    core = df_idx[df_idx["market"].isin(MARKETS)]
+    up = int((core["change_pct"] > 0).sum())
+    down = int((core["change_pct"] < 0).sum())
+    flat = int((core["change_pct"] == 0).sum())
     st.markdown(
         f"**全市场广度**：🟥 上涨 {up} · 🟩 下跌 {down} · ➖ 平 {flat}"
-        f"（共 {len(df_idx)} 个指数）"
+        f"（共 {len(core)} 个指数）"
     )
     lines = []
     for mkt, label in MARKETS.items():
@@ -419,4 +517,5 @@ def render_yields(yields_df, date_str):
         file_name=f"yields_{date_str}.csv",
         mime="text/csv",
     )
+
 
