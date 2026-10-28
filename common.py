@@ -237,9 +237,6 @@ def render_all_market_change(df_idx, date_str):
     注：仅含五大股市；大宗商品涨跌幅在「分市场行情」标签页单独展示，
     国债利差行的 change_pct 口径与价格涨跌幅不同，另见国债收益率区块。
     """
-    st.divider()
-    st.subheader("📊 全市场涨跌幅对比")
-
     if df_idx.empty:
         st.info("暂无行情数据")
         return
@@ -251,10 +248,11 @@ def render_all_market_change(df_idx, date_str):
     base["市场"] = base["market"].map(MARKETS)
 
     view = st.radio(
-        " ",
+        "",
         ["按指数（全部品种）", "按市场（平均涨跌幅）"],
         horizontal=True,
         key="all_change_view",
+        label_visibility="collapsed",
     )
 
     scale = ["#52c41a", "#d9d9d9", "#ff4d4f"]  # 绿 → 灰 → 红
@@ -270,7 +268,7 @@ def render_all_market_change(df_idx, date_str):
             color_continuous_scale=scale,
             color_continuous_midpoint=0,
             text="change_pct",
-            title=f"全市场涨跌幅对比 · 按指数（{date_str}）",
+            title=f"各指数涨跌幅（{date_str}）",
             labels={"change_pct": "涨跌幅(%)", "名称": ""},
         )
         fig.update_traces(texttemplate="%{text:+.2f}%", textposition="outside")
@@ -517,5 +515,3 @@ def render_yields(yields_df, date_str):
         file_name=f"yields_{date_str}.csv",
         mime="text/csv",
     )
-
-
