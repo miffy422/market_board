@@ -44,6 +44,69 @@ CNBC_COMMODITIES = [
     {"symbol": "@S.1", "name": "大豆", "market": "Commodity"},
 ]
 
+# ============ 行业板块（涨跌幅热力图）============
+# 数据源：腾讯行业 / 主题指数（约 22 个板块，覆盖主要一级行业，返回干净 GBK 文本）。
+TENCENT_INDUSTRY = [
+    ("sh000037", "上证医药"), ("sz399997", "中证白酒"), ("sz399986", "中证银行"),
+    ("sz399932", "中证消费"), ("sz399967", "中证军工"), ("sz399989", "中证医疗"),
+    ("sz399998", "中证煤炭"), ("sh000922", "中证红利"), ("sz399933", "中证医药"),
+    ("sz399975", "证券公司"), ("sh000827", "中证环保"), ("sz399971", "中证传媒"),
+    ("sz399808", "中证新能"), ("sh000905", "中证500"), ("sz399395", "国证有色"),
+    ("sh000016", "上证50"), ("sz399324", "深证红利"), ("sz399438", "绿色电力"),
+    ("sz399437", "证券龙头"), ("sz399973", "中证国防"), ("sh000068", "上证资源"),
+    ("sz399928", "中证能源"),
+]
+
+
+def fetch_industry():
+    """行业板块涨跌（热力图数据源）
+
+    数据源：腾讯行业 / 主题指数（约 22 个板块）。
+    返回 indices 行（market='CNIndustry'）；close 暂存涨跌幅，便于统一读取。
+    """
+    items = _fetch_tencent_industry()
+    if items:
+        print(f"✅ 行业板块（腾讯）：{len(items)} 个")
+    else:
+        print("⚠️ 腾讯行业板块获取失败")
+    return items
+
+
+def _fetch_tencent_industry():
+    """腾讯行业 / 主题指数（数据源）"""
+    codes = ",".join(c for c, _ in TENCENT_INDUSTRY)
+    names = {c: n for c, n in TENCENT_INDUSTRY}
+    try:
+        resp = requests.get(f"http://qt.gtimg.cn/q={codes}", timeout=15)
+        resp.encoding = "gbk"
+    except Exception as e:
+        print(f"⚠️ 腾讯行业指数失败: {e}")
+        return []
+    items = []
+    for line in resp.text.split(";"):
+        m = re.search(r'v_(\w+)="([^"]+)"', line)
+        if not m:
+            continue
+        code, raw = m.groups()
+        p = raw.split("~")
+        if len(p) < 40 or not p[1]:
+            continue
+        try:
+            chg = float(p[32])
+        except (ValueError, TypeError):
+            continue
+        items.append({
+            "market": "CNIndustry",
+            "code": code,
+            "name": names.get(code, p[1]),
+            "close": chg,
+            "change_pct": chg,
+            "volume": 0.0,
+            "turnover": None,
+        })
+    return items
+
+
 # ============ 国债收益率曲线（中/美）============
 # 东方财富数据中心「中美国债收益率」报表（data.eastmoney.com/cjsj/zmgzsyl.html 的后台接口），
 # 一次请求同时返回中国（中债）与美国（美联储）的 2Y/5Y/10Y/30Y 收益率，字段含义已用
@@ -89,9 +152,15 @@ def init_db():
             close REAL,
             change_pct REAL,
             volume REAL,
+            turnover REAL,
             update_time TEXT
         )
     """)
+    # 兼容旧库：补充 turnover（成交额）列
+    try:
+        c.execute("ALTER TABLE indices ADD COLUMN turnover REAL")
+    except sqlite3.OperationalError:
+        pass
     c.execute("""
         CREATE TABLE IF NOT EXISTS news (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,21 +206,37 @@ def fetch_tencent():
             parts = raw.split("~")
             if len(parts) < 6:
                 continue
-            name, close_str, prev_str = parts[1], parts[3], parts[4]
+            name = parts[1]
             try:
-                close = float(close_str)
-                prev = float(prev_str)
+                close = float(parts[3])
+                prev = float(parts[4])
                 change_pct = round((close - prev) / prev * 100, 2) if prev else 0
             except ValueError:
                 continue
             _, market = TENCENT_CODES.get(code, (name, "Unknown"))
+            # parts[35] = 现价/成交量(手)/成交额(元)；港股该段无斜杠分隔，无成交额
+            seg = parts[35].split("/") if len(parts) > 35 else []
+            amount = None
+            vol = 0.0
+            if len(seg) >= 3:
+                try:
+                    amount = float(seg[2])   # 成交额(元)
+                    vol = float(seg[1])       # 成交量(手)
+                except ValueError:
+                    amount = None
+            elif len(parts) > 6:
+                try:
+                    vol = float(parts[6])
+                except ValueError:
+                    vol = 0.0
             result.append({
                 "market": market,
                 "code": code,
                 "name": name,
                 "close": close,
                 "change_pct": change_pct,
-                "volume": 0,
+                "volume": vol,
+                "turnover": amount,
             })
         print(f"✅ 腾讯接口：{len(result)} 条")
         return result
@@ -212,13 +297,21 @@ def _fetch_cnbc(items):
         except (ValueError, TypeError):
             print(f"⚠️ {item['name']} 字段解析失败: {data}")
             continue
+        vol_raw = data.get("Volume")
+        vol = 0.0
+        if vol_raw is not None:
+            try:
+                vol = float(str(vol_raw).replace(",", ""))
+            except (ValueError, TypeError):
+                vol = 0.0
         result.append({
             "market": item["market"],
             "code": item["symbol"],
             "name": item["name"],
             "close": close,
             "change_pct": change_pct,
-            "volume": 0,
+            "volume": vol,
+            "turnover": None,
         })
         print(f"✅ {item['name']}: {close} ({change_pct}%)")
         time.sleep(1)  # 两次请求间留间隔
@@ -518,11 +611,12 @@ def save_to_db(indices, news_list, yields=None):
 
     for item in indices:
         c.execute("""
-            INSERT INTO indices (trade_date, market, code, name, close, change_pct, volume, update_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO indices (trade_date, market, code, name, close, change_pct, volume, turnover, update_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             today, item["market"], item["code"], item["name"],
-            item["close"], item["change_pct"], item.get("volume", 0), now,
+            item["close"], item["change_pct"], item.get("volume", 0),
+            item.get("turnover", None), now,
         ))
 
     for item in news_list:
@@ -558,6 +652,8 @@ if __name__ == "__main__":
 
     indices += fetch_commodities()
 
+    indices += fetch_industry()
+
     yields = fetch_yields()
     indices += yields_to_index_rows(yields)
 
@@ -565,3 +661,4 @@ if __name__ == "__main__":
 
     save_to_db(indices, news, yields)
     print("完成")
+
