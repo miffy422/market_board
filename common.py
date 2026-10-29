@@ -364,46 +364,152 @@ def render_industry(df, date_str):
 
 def render_summary(df_idx, df_news):
     """当日盘面智能总结（规则引擎 v1）：全市场广度 + 各市场领涨领跌 + 新闻统计 + 异常波动预警。"""
-    st.subheader("💡当日盘面总结")
     if df_idx.empty:
         st.info("暂无行情数据")
         return
+
+    # 使用金融看板风格的总结面板
+    st.markdown("""
+    <style>
+    .summary-panel {
+        background: var(--bg-card);
+        backdrop-filter: blur(8px);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin: 0.5rem 0;
+    }
+    .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+    }
+    .summary-stat {
+        text-align: center;
+        padding: 0.75rem;
+        border-radius: 8px;
+        background: var(--bg-secondary);
+    }
+    .summary-stat .num {
+        font-size: 1.8rem;
+        font-weight: 700;
+        font-family: 'SF Mono', 'JetBrains Mono', monospace;
+    }
+    .summary-stat .lbl { font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem; }
+    .summary-stat.up .num { color: var(--up-red); }
+    .summary-stat.down .num { color: var(--down-green); }
+    .summary-stat.flat .num { color: var(--text-muted); }
+    .market-leader {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid var(--border-subtle);
+        font-size: 0.85rem;
+    }
+    .market-leader:last-child { border-bottom: none; }
+    .market-leader .mkt-name {
+        font-weight: 600; color: var(--text-primary); min-width: 100px;
+    }
+    .market-leader .top-name { color: var(--up-red); font-weight: 500; }
+    .market-leader .bot-name { color: var(--down-green); font-weight: 500; }
+    .alert-box {
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        margin-top: 1rem;
+    }
+    .safe-box {
+        background: rgba(34, 197, 94, 0.08);
+        border: 1px solid rgba(34, 197, 94, 0.25);
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        margin-top: 1rem;
+        color: var(--down-green);
+        font-weight: 500;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     # 广度仅统计六大市场核心指数，排除行业板块与国债利差行
     core = df_idx[df_idx["market"].isin(MARKETS)]
     up = int((core["change_pct"] > 0).sum())
     down = int((core["change_pct"] < 0).sum())
     flat = int((core["change_pct"] == 0).sum())
-    st.markdown(
-        f"**全市场广度**：🟥 上涨 {up} · 🟩 下跌 {down} · ➖ 平 {flat}"
-        f"（共 {len(core)} 个指数）"
-    )
-    lines = []
+
+    # 广度统计卡片
+    st.markdown(f"""
+    <div class="summary-panel">
+        <div class="summary-grid">
+            <div class="summary-stat up">
+                <div class="num">🟥 {up}</div>
+                <div class="lbl">上涨</div>
+            </div>
+            <div class="summary-stat down">
+                <div class="num">🟩 {down}</div>
+                <div class="lbl">下跌</div>
+            </div>
+            <div class="summary-stat flat">
+                <div class="num">➖ {flat}</div>
+                <div class="lbl">平盘</div>
+            </div>
+            <div class="summary-stat">
+                <div class="num" style="color: var(--accent-blue);">{len(core)}</div>
+                <div class="lbl">核心指数</div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # 各市场领涨领跌
+    leaders_html = '<div style="margin-top: 0.5rem;">'
     for mkt, label in MARKETS.items():
         sub = df_idx[df_idx["market"] == mkt]
         if sub.empty:
             continue
         top = sub.loc[sub["change_pct"].idxmax()]
         bot = sub.loc[sub["change_pct"].idxmin()]
-        lines.append(
-            f"- {label}：领涨 **{top['name']} {top['change_pct']:+.2f}%**，"
-            f"领跌 **{bot['name']} {bot['change_pct']:+.2f}%**"
-        )
-    if lines:
-        st.markdown("\n".join(lines))
+        leaders_html += f'''
+        <div class="market-leader">
+            <span class="mkt-name">{label}</span>
+            <span class="top-name">▲ {top['name']} {top['change_pct']:+.2f}%</span>
+            <span class="bot-name">▼ {bot['name']} {bot['change_pct']:+.2f}%</span>
+        </div>
+        '''
+    leaders_html += '</div></div>'
+    st.markdown(leaders_html, unsafe_allow_html=True)
+
+    # 新闻统计
     if df_news is not None and not df_news.empty:
         lvl1 = int((df_news["level"] == 1).sum())
-        st.markdown(
-            f"**重要信息**：共 {len(df_news)} 条，其中 🔴 高优先级 {lvl1} 条"
-            f"（详见左侧「News / 重要信息」页面）"
-        )
+        st.markdown(f"""
+        <div style="margin-top: 1rem; padding: 0.75rem 1rem; background: rgba(59, 130, 246, 0.08);
+            border-radius: 8px; font-size: 0.85rem; color: var(--text-secondary);">
+            📰 <strong style="color: var(--accent-blue);">重要信息</strong>：共 {len(df_news)} 条，
+            其中 🔴 高优先级 <strong style="color: var(--up-red);">{lvl1}</strong> 条
+            <span style="color: var(--text-muted);">（详见左侧「News」页面）</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # 异常波动预警
     flagged = df_idx[df_idx["change_pct"].abs() >= ALERT_THRESHOLD]
     if not flagged.empty:
         items = "、".join(
             f"{r['name']} {r['change_pct']:+.2f}%" for _, r in flagged.iterrows()
         )
-        st.error(f"⚠️ **异常波动预警**（|涨跌幅| ≥ {ALERT_THRESHOLD:.0f}%）：{items}")
+        st.markdown(f"""
+        <div class="alert-box">
+            ⚠️ <strong>异常波动预警</strong>（|涨跌幅| ≥ {ALERT_THRESHOLD:.0f}%）<br>
+            <span style="color: var(--text-primary); font-size: 0.85rem; margin-top: 0.5rem; display: block;">
+            {items}</span>
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        st.success(f"✅ 当日无异常波动（阈值 {ALERT_THRESHOLD:.0f}%）")
+        st.markdown(f"""
+        <div class="safe-box">
+            ✅ 当日无异常波动（阈值 {ALERT_THRESHOLD:.0f}%）
+        </div>
+        """, unsafe_allow_html=True)
 
 
 def render_yields(yields_df, date_str):
@@ -413,8 +519,7 @@ def render_yields(yields_df, date_str):
     （RPTA_WEB_TREASURYYIELD，备用源：美国财政部官方 CSV）。
     颜色约定沿用展板惯例：收益率上行=红、下行=绿（中国股市配色）。
     """
-    st.divider()
-    st.subheader("📈 中美国债收益率曲线与利差")
+    from styles import render_kpi_card
 
     if yields_df.empty:
         st.info("暂无国债收益率数据（该日期可能未抓取或接口异常）")
@@ -464,27 +569,33 @@ def render_yields(yields_df, date_str):
         if spread_cards:
             _, val = spread_cards[0]  # 中国
             inverted = val < 0
-            st.metric(
-                "中国 10Y-2Y 利差", f"{val:+.0f} bp",
-                delta="倒挂(衰退信号)" if inverted else "正常",
-                delta_color="inverse" if inverted else "normal",
+            render_kpi_card(
+                label="中国 10Y-2Y 利差",
+                value=f"{val:+.0f} bp",
+                delta=f"{val:+.0f}"
             )
+            status = "⚠️ 倒挂（衰退信号）" if inverted else "✅ 正常"
+            st.markdown(f'<div style="font-size: 0.8rem; color: {"var(--up-red)" if inverted else "var(--down-green)"}; margin-top: -0.5rem;">{status}</div>', unsafe_allow_html=True)
     with card_cols[1]:
         if len(spread_cards) > 1:
             _, val = spread_cards[1]  # 美国
             inverted = val < 0
-            st.metric(
-                "美国 10Y-2Y 利差", f"{val:+.0f} bp",
-                delta="倒挂(衰退信号)" if inverted else "正常",
-                delta_color="inverse" if inverted else "normal",
+            render_kpi_card(
+                label="美国 10Y-2Y 利差",
+                value=f"{val:+.0f} bp",
+                delta=f"{val:+.0f}"
             )
+            status = "⚠️ 倒挂（衰退信号）" if inverted else "✅ 正常"
+            st.markdown(f'<div style="font-size: 0.8rem; color: {"var(--up-red)" if inverted else "var(--down-green)"}; margin-top: -0.5rem;">{status}</div>', unsafe_allow_html=True)
     with card_cols[2]:
         if cn_us_spread is not None:
-            st.metric(
-                "中美国债 10Y 利差", f"{cn_us_spread:+.0f} bp",
-                delta="美债高于中债" if cn_us_spread > 0 else "中债高于美债",
-                delta_color="inverse" if cn_us_spread > 0 else "normal",
+            render_kpi_card(
+                label="中美国债 10Y 利差",
+                value=f"{cn_us_spread:+.0f} bp",
+                delta=f"{cn_us_spread:+.0f}"
             )
+            status = "美债高于中债" if cn_us_spread > 0 else "中债高于美债"
+            st.markdown(f'<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: -0.5rem;">{status}</div>', unsafe_allow_html=True)
 
     # ---- 3) 收益率明细表（含日变动 bp）----
     rows = []
@@ -503,7 +614,16 @@ def render_yields(yields_df, date_str):
         rows.append(row)
     detail = pd.DataFrame(rows)
 
-    st.markdown("**收益率明细（较前交易日变动，单位 bp）**")
+    st.markdown("""
+    <style>
+    .sub-title {
+        font-size: 0.9rem; font-weight: 600; color: var(--text-secondary);
+        margin: 1rem 0 0.5rem 0; padding-bottom: 0.35rem;
+        border-bottom: 1px solid var(--border-subtle);
+    }
+    </style>
+    <div class="sub-title">📊 收益率明细表（较前交易日变动，单位 bp）</div>
+    """, unsafe_allow_html=True)
     styled = detail.style.map(color_pct, subset=["中国变动(bp)", "美国变动(bp)", "中美利差(bp)"])
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
